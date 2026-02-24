@@ -1,0 +1,14 @@
+[
+  {"id": "A", "label": "Block A — Admin", "baseline_kwh": 38.5, "org_id": "org_campus"},
+  {"id": "B", "label": "Block B — CS Dept", "baseline_kwh": 35.0, "org_id": "org_campus"},
+  {"id": "C", "label": "Block C — Library", "baseline_kwh": 28.0, "org_id": "org_campus"},
+  {"id": "D", "label": "Block D — Labs", "baseline_kwh": 36.0, "org_id": "org_campus"},
+  {"id": "E", "label": "Block E — Hostel", "baseline_kwh": 24.0, "org_id": "org_campus"},
+  {"id": "F", "label": "Block F — Canteen", "baseline_kwh": 34.0, "org_id": "org_campus"},
+  {"id": "G", "label": "Block G — Auditorium", "baseline_kwh": 30.0, "org_id": "org_campus"},
+  {"id": "H", "label": "Block H — Mechanical", "baseline_kwh": 33.5, "org_id": "org_campus"},
+  {"id": "I", "label": "Block I — Electronics", "baseline_kwh": 31.5, "org_id": "org_campus"},
+  {"id": "J", "label": "Block J — Sports", "baseline_kwh": 22.0, "org_id": "org_campus"},
+  {"id": "K", "label": "Block K — Research", "baseline_kwh": 40.0, "org_id": "org_campus"},
+  {"id": "L", "label": "Block L — Medical", "baseline_kwh": 37.0, "org_id": "org_campus"}
+]

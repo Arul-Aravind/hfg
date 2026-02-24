@@ -1,0 +1,9 @@
+[
+  {
+    "username": "admin",
+    "role": "admin",
+    "org_id": "org_campus",
+    "org_name": "CIT Campus",
+    "password_hash": "$pbkdf2-sha256$29000$zJmTMoawtvb.H8PY.79XCg$8MFWuoLL0mmEbP4N0eOZC2qqeicU9pHNS/xEZ1rEDqQ"
+  }
+]

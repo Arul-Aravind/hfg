@@ -1,0 +1,9 @@
+{
+  "schedule": [
+    {"start": "00:00", "end": "06:00", "intensity": 0.62},
+    {"start": "06:00", "end": "12:00", "intensity": 0.78},
+    {"start": "12:00", "end": "18:00", "intensity": 0.92},
+    {"start": "18:00", "end": "22:00", "intensity": 1.05},
+    {"start": "22:00", "end": "24:00", "intensity": 0.7}
+  ]
+}
