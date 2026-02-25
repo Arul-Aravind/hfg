@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   Brain,
-  Bot,
   CheckCircle2,
   CloudSun,
   Gauge,
@@ -24,7 +23,6 @@ import { useDashboardStream } from "@/hooks/useDashboardStream";
 import { AdrSummary, DashboardSnapshot, DemandResponseAction } from "@/types/dashboard";
 import {
   acknowledgeAlert,
-  askCopilot,
   executeAction as executeAdrActionApi,
   fetchActions,
   fetchAlerts,
@@ -34,7 +32,6 @@ import {
   resolveAlert,
   verifyAction as verifyAdrActionApi,
 } from "@/lib/api";
-import { Input } from "@/components/ui/input";
 
 const statusStyles: Record<string, string> = {
   NORMAL: "bg-neon-green/15 border-neon-green/40",
@@ -50,6 +47,9 @@ const adrStatusStyles: Record<string, string> = {
   RESOLVED: "bg-muted/30 border-muted/50 text-muted-foreground",
 };
 
+const SYNTHETIC_REPORTS_DEMO_MODE =
+  (import.meta.env.VITE_SYNTHETIC_REPORTS_DEMO_MODE ?? "true") !== "false";
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const token = getToken();
@@ -57,13 +57,11 @@ const Dashboard = () => {
   const [fallback, setFallback] = useState<DashboardSnapshot | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<BlockData | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [copilotQuestion, setCopilotQuestion] = useState("");
-  const [copilotAnswer, setCopilotAnswer] = useState<string | null>(null);
-  const [copilotCitations, setCopilotCitations] = useState<{ source: string; snippet: string }[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [actions, setActions] = useState<DemandResponseAction[]>([]);
   const [adrSummary, setAdrSummary] = useState<AdrSummary | null>(null);
+  const [reportVariantIndex, setReportVariantIndex] = useState(0);
 
   useEffect(() => {
     if (!token) {
@@ -98,6 +96,14 @@ const Dashboard = () => {
     const id = window.setInterval(load, 10000);
     return () => window.clearInterval(id);
   }, [token]);
+
+  useEffect(() => {
+    if (!SYNTHETIC_REPORTS_DEMO_MODE) return;
+    const id = window.setInterval(() => {
+      setReportVariantIndex((prev) => (prev + 1) % 5);
+    }, 7000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const snapshot = data ?? fallback;
   const pathwayState = snapshot?.pathway_state;
@@ -155,6 +161,102 @@ const Dashboard = () => {
       .sort((a, b) => (b.lstm_avoidable_kwh ?? 0) - (a.lstm_avoidable_kwh ?? 0))
       .slice(0, 4);
   }, [snapshot]);
+
+  const syntheticReportContent = useMemo(() => {
+    const blockCount = snapshot?.totals.block_count ?? 0;
+    const totalSavings = snapshot?.totals.total_savings_kwh ?? 0;
+    const totalWasteCost = snapshot?.totals.total_waste_cost_inr ?? 0;
+    const co2Avoided = snapshot?.totals.co2_kg ?? 0;
+    const efficiency = snapshot?.totals.efficiency_score ?? 0;
+    const predictedAvoidable = snapshot?.totals.predicted_avoidable_kwh_next_hour ?? 0;
+    const topHotspots = hotspots.slice(0, 3);
+    const topHotspotText = topHotspots.length
+      ? topHotspots
+          .map((b) => `${b.block_label} (${b.status.replace("_", " ")}, ${b.savings_kwh.toFixed(1)} kWh)`)
+          .join(", ")
+      : "No active waste hotspots in this cycle.";
+    const topPredictive = predictiveHotspots[0];
+    const pathwayRate = pathwayState?.event_rate_per_minute ?? 0;
+    const adrVerified = effectiveAdrSummary?.verified_savings_kwh ?? 0;
+
+    const daily = [
+      [
+        "Daily Energy Intelligence Summary (Scenario 1/5)",
+        `Campus coverage: ${blockCount} blocks live on Pathway stream.`,
+        `Current avoidable energy identified: ${totalSavings.toFixed(2)} kWh | Waste cost exposure: ₹${totalWasteCost.toFixed(2)} | CO2 avoided: ${co2Avoided.toFixed(2)} kg.`,
+        `Top hotspots: ${topHotspotText}`,
+      ].join("\n\n"),
+      [
+        "Daily Energy Intelligence Summary (Scenario 2/5)",
+        `Efficiency score is ${efficiency.toFixed(1)}/100 with stream throughput at ${pathwayRate.toFixed(1)} events/min.`,
+        `Immediate next-hour avoidable anomaly forecast: ${predictedAvoidable.toFixed(2)} kWh.`,
+        topPredictive
+          ? `Highest predictive risk: ${topPredictive.block_label} (${topPredictive.lstm_risk}) with ${(100 * (topPredictive.lstm_anomaly_probability ?? 0)).toFixed(0)}% anomaly probability.`
+          : "Predictive engine reports no medium/high risk block in the next-hour window.",
+      ].join("\n\n"),
+      [
+        "Daily Energy Intelligence Summary (Scenario 3/5)",
+        `Operational focus: tighten schedules in low-occupancy zones and validate HVAC setpoints in waste-classified blocks.`,
+        `Observed savings this cycle: ${totalSavings.toFixed(2)} kWh; verified ADR contribution so far: ${adrVerified.toFixed(2)} kWh.`,
+        `Priority review list: ${topHotspotText}`,
+      ].join("\n\n"),
+      [
+        "Daily Energy Intelligence Summary (Scenario 4/5)",
+        `Cost-first view: current avoidable load corresponds to ₹${totalWasteCost.toFixed(2)} of waste-cost exposure under active tariff conditions.`,
+        `Carbon-first view: real-time optimization is tracking ${co2Avoided.toFixed(2)} kg CO2 reduction potential.`,
+        `Recommended next action: execute/verify ADR on the highest deviation low-occupancy block.`,
+      ].join("\n\n"),
+      [
+        "Daily Energy Intelligence Summary (Scenario 5/5)",
+        `Pathway state indicates ${pathwayState?.blocks_updated ?? 0} blocks updated in the last minute with latest ingest at ${
+          pathwayState?.last_ingest_at ? new Date(pathwayState.last_ingest_at).toLocaleTimeString() : "--"
+        }.`,
+        `Campus trend remains ${topHotspots.length ? "intervention-worthy" : "stable"} with ${predictedAvoidable.toFixed(2)} kWh forecast avoidable anomaly load next hour.`,
+        `Top hotspots: ${topHotspotText}`,
+      ].join("\n\n"),
+    ];
+
+    const weeklySavingsSynthetic = totalSavings * 7;
+    const weeklyCostSynthetic = totalWasteCost * 7;
+    const weeklyCo2Synthetic = co2Avoided * 7;
+    const weeklyAdrSynthetic = adrVerified * 7;
+
+    const weekly = [
+      [
+        "Weekly Energy Intelligence Summary (Scenario 1/5)",
+        `Projected weekly savings at current operating pattern: ${weeklySavingsSynthetic.toFixed(2)} kWh, equivalent to ₹${weeklyCostSynthetic.toFixed(2)} avoidable cost and ${weeklyCo2Synthetic.toFixed(2)} kg CO2 impact.`,
+        `Recurring hotspot clusters: ${topHotspotText}`,
+      ].join("\n\n"),
+      [
+        "Weekly Energy Intelligence Summary (Scenario 2/5)",
+        `Control-performance view: ADR workflow scales to an estimated ${weeklyAdrSynthetic.toFixed(2)} kWh verified reduction if current response rate is sustained.`,
+        `Primary leverage areas remain low-occupancy/high-deviation blocks and setpoint governance.`,
+      ].join("\n\n"),
+      [
+        "Weekly Energy Intelligence Summary (Scenario 3/5)",
+        `Forecast-led operations: predictive anomaly engine is currently estimating ${predictedAvoidable.toFixed(2)} kWh next-hour avoidable load; converting these early warnings to actions improves weekly outcomes.`,
+        topPredictive
+          ? `Current lead indicator block: ${topPredictive.block_label} (${topPredictive.lstm_risk} predictive risk).`
+          : "No lead indicator block currently exceeds the predictive risk threshold.",
+      ].join("\n\n"),
+      [
+        "Weekly Energy Intelligence Summary (Scenario 4/5)",
+        `Sustainability cadence recommendation: daily operator review + twice-daily ADR verification + weekly block accountability review.`,
+        `At current efficiency (${efficiency.toFixed(1)}/100), the campus is positioned for measurable savings with stronger control discipline.`,
+      ].join("\n\n"),
+      [
+        "Weekly Energy Intelligence Summary (Scenario 5/5)",
+        `Streaming health remains suitable for weekly analytics: ${blockCount} blocks monitored, ${pathwayRate.toFixed(1)} events/min active feed rate.`,
+        `Weekly optimization narrative: capture avoidable load earlier, verify ADR gains, and reduce repeat hotspot recurrence in top 3 blocks.`,
+        `Top recurring candidates: ${topHotspotText}`,
+      ].join("\n\n"),
+    ];
+
+    return {
+      daily: daily[reportVariantIndex % 5],
+      weekly: weekly[reportVariantIndex % 5],
+    };
+  }, [snapshot, hotspots, predictiveHotspots, pathwayState, effectiveAdrSummary, reportVariantIndex]);
 
   const blockMap = useMemo(() => {
     const map = new Map<string, BlockData>();
@@ -216,18 +318,6 @@ const Dashboard = () => {
     link.download = `energysense_snapshot_${new Date().toISOString()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
-  };
-
-  const handleCopilotAsk = async () => {
-    if (!token || !copilotQuestion.trim()) return;
-    try {
-      const res = await askCopilot(token, copilotQuestion.trim());
-      setCopilotAnswer(res.answer);
-      setCopilotCitations(res.citations ?? []);
-    } catch {
-      setCopilotAnswer("Copilot is unavailable. Check backend configuration.");
-      setCopilotCitations([]);
-    }
   };
 
   const handleAcknowledge = async (alertId: string) => {
@@ -411,10 +501,6 @@ const Dashboard = () => {
                 <div className="rounded-lg border border-primary/30 bg-primary/10 p-3">
                   <p className="text-xs text-muted-foreground uppercase">Ready</p>
                   <p className="text-foreground">{snapshot?.predictive_state?.model_ready ? "READY" : "WARMING UP"}</p>
-                </div>
-                <div className="rounded-lg border border-primary/30 bg-primary/10 p-3">
-                  <p className="text-xs text-muted-foreground uppercase">Training Samples</p>
-                  <p className="text-foreground">{snapshot?.predictive_state?.training_samples ?? 0}</p>
                 </div>
                 <div className="rounded-lg border border-primary/30 bg-primary/10 p-3">
                   <p className="text-xs text-muted-foreground uppercase">Avoidable Next Hour</p>
@@ -640,34 +726,7 @@ const Dashboard = () => {
             </div>
           </section>
 
-          <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-10">
-            <div className="lg:col-span-2 glass-card neon-border rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-orbitron text-xl font-bold neon-text">Energy Intelligence Copilot</h2>
-                <Bot className="w-5 h-5 text-primary" />
-              </div>
-              <p className="text-sm text-muted-foreground mb-4">
-                Ask anything about live energy usage, policy compliance, or waste causes. Uses live Pathway indexing.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Input
-                  value={copilotQuestion}
-                  onChange={(e) => setCopilotQuestion(e.target.value)}
-                  placeholder="Why is Block D flagged as POSSIBLE WASTE?"
-                  className="bg-muted/40"
-                />
-                <Button onClick={handleCopilotAsk}>Ask Copilot</Button>
-              </div>
-              <div className="mt-4 rounded-lg border border-primary/20 bg-muted/40 p-4 text-sm text-muted-foreground min-h-[120px]">
-                {copilotAnswer ? copilotAnswer : "Copilot response will appear here."}
-                {copilotCitations.length > 0 ? (
-                  <div className="mt-3 text-xs font-mono text-muted-foreground">
-                    Sources: {copilotCitations.map((c) => c.source).join(", ")}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
+          <section className="grid grid-cols-1 gap-6 mt-10">
             <div className="glass-card neon-border rounded-lg p-6 flex flex-col">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="font-orbitron text-xl font-bold neon-text">Live Alerts</h2>
@@ -713,13 +772,24 @@ const Dashboard = () => {
               return (
                 <div key={type} className="glass-card neon-border rounded-lg p-6">
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-orbitron text-lg font-bold neon-text">{type.toUpperCase()} Report</h3>
+                    <div className="flex items-center gap-3">
+                      <h3 className="font-orbitron text-lg font-bold neon-text">{type.toUpperCase()} Report</h3>
+                      {SYNTHETIC_REPORTS_DEMO_MODE ? (
+                        <span className="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-warning">
+                          Demo Mode · {reportVariantIndex + 1}/5
+                        </span>
+                      ) : null}
+                    </div>
                     <span className="text-xs font-mono text-muted-foreground">
                       {report?.generated_at ? new Date(report.generated_at).toLocaleTimeString() : "--"}
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground whitespace-pre-line">
-                    {report?.content ?? "Generating report..."}
+                    {SYNTHETIC_REPORTS_DEMO_MODE
+                      ? type === "daily"
+                        ? syntheticReportContent.daily
+                        : syntheticReportContent.weekly
+                      : (report?.content ?? "Generating report...")}
                   </p>
                 </div>
               );

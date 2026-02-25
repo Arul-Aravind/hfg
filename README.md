@@ -9,6 +9,14 @@ A premium, real-time sustainability dashboard that transforms raw energy streams
 - **Predictive anomaly engine** with LSTM-style sequence forecasting, avoidable anomaly estimation, and per-block risk scoring.
 - **Lovable + Vite + Tailwind** front-end with a premium neon UI.
 
+## Judge / Evaluation Docs
+- `docs/JUDGE_GUIDE.md` — fast review path and demo sequence
+- `docs/MARKET_FIT.md` — user/problem fit
+- `docs/COMPETITIVE_ANALYSIS.md` — differentiation vs dashboards/BMS tools
+- `docs/INNOVATION.md` — Pathway + ADR + predictive features
+- `docs/SUCCESS_CRITERIA.md` — measurable success metrics
+- `docs/VALIDATION_RESULTS.md` — development and demo validation evidence
+
 ## Local Setup (Mac)
 
 ### 1) Backend (FastAPI + Pathway)
@@ -29,6 +37,10 @@ npm install
 npm run dev
 ```
 Frontend runs on `http://localhost:5173`.
+
+### Environment Variables
+- Copy `.env.example` to `.env` and fill optional keys.
+- `VITE_SYNTHETIC_REPORTS_DEMO_MODE=true` keeps the Daily/Weekly cards in labeled rotating demo mode.
 
 ### Demo Credentials
 - **Username:** `admin`

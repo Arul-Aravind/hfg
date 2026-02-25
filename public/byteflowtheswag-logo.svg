@@ -1,0 +1,38 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="24" y1="24" x2="232" y2="232" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#05070A"/>
+      <stop offset="1" stop-color="#0D1118"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="52" y1="52" x2="204" y2="204" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF2A2A"/>
+      <stop offset="1" stop-color="#FF7A00"/>
+    </linearGradient>
+    <filter id="glow" x="0" y="0" width="256" height="256" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#bg)" stroke="#FF2A2A" stroke-opacity="0.35" stroke-width="2"/>
+  <g opacity="0.18">
+    <path d="M32 80H224" stroke="#FF2A2A" stroke-width="1"/>
+    <path d="M32 128H224" stroke="#FF2A2A" stroke-width="1"/>
+    <path d="M32 176H224" stroke="#FF2A2A" stroke-width="1"/>
+    <path d="M80 32V224" stroke="#FF2A2A" stroke-width="1"/>
+    <path d="M128 32V224" stroke="#FF2A2A" stroke-width="1"/>
+    <path d="M176 32V224" stroke="#FF2A2A" stroke-width="1"/>
+  </g>
+  <g filter="url(#glow)">
+    <path d="M68 62H145C174.823 62 199 86.1766 199 116C199 145.823 174.823 170 145 170H120V194H89V170H68V62Z" fill="none" stroke="url(#accent)" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M100 94H141C153.15 94 163 103.85 163 116C163 128.15 153.15 138 141 138H100V94Z" fill="url(#accent)" fill-opacity="0.12" stroke="url(#accent)" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M128 78V202" stroke="url(#accent)" stroke-width="8" stroke-linecap="round"/>
+    <path d="M146 106L184 106" stroke="url(#accent)" stroke-width="8" stroke-linecap="round"/>
+    <path d="M146 126L177 126" stroke="url(#accent)" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <text x="128" y="232" text-anchor="middle" fill="#F6F7FB" fill-opacity="0.92" font-family="monospace" font-size="18" font-weight="700">
+    BYTEFLOW
+  </text>
+</svg>

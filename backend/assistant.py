@@ -83,7 +83,6 @@ class Copilot:
         self.gemini_api_key = (
             os.getenv("GEMINI_API_KEY")
             or os.getenv("GOOGLE_API_KEY")
-            or "AIzaSyCETrx-O6TbS1LBMZCCeHQ6QwFx_8N-NDA"
         )
         self._gemini_models_cache: list[str] = []
         self._gemini_models_cache_at = 0.0
