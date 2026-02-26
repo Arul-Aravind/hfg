@@ -86,4 +86,5 @@ pip install tensorflow-macos tensorflow-metal
 - **Tariff/Carbon**: edit `backend/data/tariffs.json` and `backend/data/carbon_intensity.json` to simulate time-of-use & grid intensity changes.
 
 ---
-Built for real-time sustainability intelligence.
+Built for real-time sustainability intelligence
+
