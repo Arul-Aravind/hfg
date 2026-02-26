@@ -88,4 +88,4 @@ pip install tensorflow-macos tensorflow-metal
 ---
 Built for real-time sustainability intelligence
 Serving our nation for a greener future and to preserve the natural ecosystem!
-
+Thank you!
