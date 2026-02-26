@@ -28,6 +28,11 @@ class BlockSnapshot:
     forecast_peak_deviation: float
     forecast_waste_risk: str
     updated_at: str
+    raw_energy_kwh: float = 0.0
+    twin_source_reduction_pct: float = 0.0
+    twin_source_stage: str = "IDLE"
+    twin_source_active_effects: int = 0
+    twin_source_applied: bool = False
     lstm_predicted_deviation_pct: float = 0.0
     lstm_anomaly_probability: float = 0.0
     lstm_risk: str = "LOW"

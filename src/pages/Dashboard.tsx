@@ -18,11 +18,15 @@ import BlockStatusCards, { BlockData } from "@/components/BlockStatusCards";
 import ParticleBackground from "@/components/ParticleBackground";
 import BlockDetailModal from "@/components/BlockDetailModal";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { clearToken, getToken } from "@/lib/auth";
 import { useDashboardStream } from "@/hooks/useDashboardStream";
 import { AdrSummary, DashboardSnapshot, DemandResponseAction } from "@/types/dashboard";
 import {
   acknowledgeAlert,
+  applyTwinManualControl,
   executeAction as executeAdrActionApi,
   fetchActions,
   fetchAlerts,
@@ -62,6 +66,13 @@ const Dashboard = () => {
   const [actions, setActions] = useState<DemandResponseAction[]>([]);
   const [adrSummary, setAdrSummary] = useState<AdrSummary | null>(null);
   const [reportVariantIndex, setReportVariantIndex] = useState(0);
+  const [selectedTwinBlockId, setSelectedTwinBlockId] = useState<string>("");
+  const [twinHvacEco, setTwinHvacEco] = useState(false);
+  const [twinLightsOff, setTwinLightsOff] = useState(false);
+  const [twinVentEco, setTwinVentEco] = useState(false);
+  const [twinSetpointDelta, setTwinSetpointDelta] = useState(2);
+  const [twinDurationMinutes, setTwinDurationMinutes] = useState(15);
+  const [twinApplyBusy, setTwinApplyBusy] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -161,6 +172,46 @@ const Dashboard = () => {
       .sort((a, b) => (b.lstm_avoidable_kwh ?? 0) - (a.lstm_avoidable_kwh ?? 0))
       .slice(0, 4);
   }, [snapshot]);
+
+  const twinState = snapshot?.digital_twin;
+  const twinEffects = twinState?.active_effect_details ?? [];
+  const twinEffectsByActionId = useMemo(() => {
+    const map = new Map<string, (typeof twinEffects)[number][]>();
+    twinEffects.forEach((effect) => {
+      if (!effect.action_id) return;
+      const list = map.get(effect.action_id) ?? [];
+      list.push(effect);
+      map.set(effect.action_id, list);
+    });
+    return map;
+  }, [twinEffects]);
+
+  const selectedTwinBlock = useMemo(
+    () => snapshot?.blocks.find((block) => block.block_id === selectedTwinBlockId) ?? null,
+    [snapshot, selectedTwinBlockId],
+  );
+
+  useEffect(() => {
+    if (!snapshot?.blocks?.length) {
+      setSelectedTwinBlockId("");
+      return;
+    }
+    if (!selectedTwinBlockId || !snapshot.blocks.some((block) => block.block_id === selectedTwinBlockId)) {
+      setSelectedTwinBlockId(snapshot.blocks[0].block_id);
+    }
+  }, [snapshot?.blocks, selectedTwinBlockId]);
+
+  useEffect(() => {
+    if (!selectedTwinBlock) return;
+    setTwinHvacEco(selectedTwinBlock.twin_control_state?.hvac_mode === "ECO");
+    setTwinLightsOff(selectedTwinBlock.twin_control_state?.lights_on === false);
+    setTwinVentEco(selectedTwinBlock.twin_control_state?.ventilation_mode === "ECO");
+  }, [
+    selectedTwinBlock?.block_id,
+    selectedTwinBlock?.twin_control_state?.hvac_mode,
+    selectedTwinBlock?.twin_control_state?.lights_on,
+    selectedTwinBlock?.twin_control_state?.ventilation_mode,
+  ]);
 
   const syntheticReportContent = useMemo(() => {
     const blockCount = snapshot?.totals.block_count ?? 0;
@@ -364,6 +415,31 @@ const Dashboard = () => {
     if (!token) return;
     await resolveAdrActionApi(token, actionId);
     await refreshAdr();
+  };
+
+  const handleApplyTwinControls = async (reset = false) => {
+    if (!token || !selectedTwinBlockId) return;
+    setTwinApplyBusy(true);
+    try {
+      await applyTwinManualControl(token, {
+        block_id: selectedTwinBlockId,
+        hvac_eco: reset ? false : twinHvacEco,
+        lights_off: reset ? false : twinLightsOff,
+        ventilation_eco: reset ? false : twinVentEco,
+        hvac_setpoint_delta_c: reset ? 2 : twinSetpointDelta,
+        duration_minutes: reset ? 15 : twinDurationMinutes,
+        replace_existing: true,
+      });
+      if (reset) {
+        setTwinHvacEco(false);
+        setTwinLightsOff(false);
+        setTwinVentEco(false);
+      }
+    } catch (error) {
+      console.error("Failed to apply digital twin controls", error);
+    } finally {
+      setTwinApplyBusy(false);
+    }
   };
 
   const openBlockDetails = (block: BlockData) => {
@@ -582,7 +658,9 @@ const Dashboard = () => {
                     No ADR actions yet.
                   </div>
                 ) : (
-                  effectiveActions.slice(0, 6).map((action) => (
+                  effectiveActions.slice(0, 6).map((action) => {
+                    const actionTwinEffects = twinEffectsByActionId.get(action.id) ?? [];
+                    return (
                     <div key={action.id} className="rounded-lg border border-primary/20 bg-muted/30 p-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
@@ -597,6 +675,12 @@ const Dashboard = () => {
                       <p className="text-[11px] text-muted-foreground mt-1">
                         Target: {action.proposed_reduction_kwh.toFixed(2)} kWh · ₹{action.expected_inr_per_hour.toFixed(2)}/hr · {action.expected_co2_kg_per_hour.toFixed(2)} kgCO2/hr
                       </p>
+                      {actionTwinEffects.length > 0 ? (
+                        <div className="mt-2 rounded-md border border-primary/30 bg-primary/10 p-2 text-[11px] font-mono text-muted-foreground">
+                          Digital twin active ({actionTwinEffects.length} effect{actionTwinEffects.length > 1 ? "s" : ""}):{" "}
+                          {actionTwinEffects.map((e) => `${e.control_type} ${e.progress_pct.toFixed(0)}% ${e.stage}`).join(" · ")}
+                        </div>
+                      ) : null}
                       {action.verification_note ? (
                         <p className="text-[11px] text-neon-green mt-1">
                           {action.verification_note}
@@ -622,7 +706,7 @@ const Dashboard = () => {
                         ) : null}
                       </div>
                     </div>
-                  ))
+                  )})
                 )}
               </div>
             </div>
@@ -651,6 +735,265 @@ const Dashboard = () => {
                   <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
                     <Zap className="w-4 h-4 text-warning" />
                     Measured post-action validation
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-10">
+            <div className="lg:col-span-3 glass-card neon-border rounded-lg p-6">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="font-orbitron text-xl font-bold neon-text">Digital Twin Closed Loop (Option A + Option B)</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Option A overlays a counterfactual preview, while Option B modifies the live synthetic/CSV sensor stream after action execution.
+                  </p>
+                </div>
+                <div className="text-xs font-mono text-muted-foreground">
+                  {twinState?.active_effects ?? 0} active effects · {twinState?.controlled_blocks ?? 0} controlled blocks
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="rounded-lg border border-primary/30 bg-primary/10 p-4">
+                  <p className="text-xs text-muted-foreground font-mono uppercase">Option A — Overlay Twin</p>
+                  <p className="text-lg font-orbitron text-foreground mt-1">
+                    {twinState?.option_a_overlay_enabled ? "ENABLED" : "DISABLED"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Instant preview delta: {(snapshot?.totals.digital_twin_overlay_delta_kwh_now ?? 0).toFixed(2)} kWh
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Preview blocks: {twinState?.overlay_preview_blocks ?? 0}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-neon-green/40 bg-neon-green/10 p-4">
+                  <p className="text-xs text-muted-foreground font-mono uppercase">Option B — Sensor Source Twin</p>
+                  <p className="text-lg font-orbitron text-foreground mt-1">
+                    {twinState?.option_b_source_enabled ? "ACTIVE" : "DISABLED"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Source-adjusted blocks: {snapshot?.totals.digital_twin_source_active_blocks ?? 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Last source trace:{" "}
+                    {twinState?.last_source_trace?.ts
+                      ? new Date(twinState.last_source_trace.ts).toLocaleTimeString()
+                      : "--"}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-warning/40 bg-warning/10 p-4">
+                  <p className="text-xs text-muted-foreground font-mono uppercase">Last Twin Response</p>
+                  {twinState?.last_source_trace ? (
+                    <>
+                      <p className="text-sm text-foreground mt-1">
+                        {twinState.last_source_trace.block_id} · {twinState.last_source_trace.stage}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Raw {twinState.last_source_trace.raw_energy_kwh.toFixed(2)} → Sim{" "}
+                        {twinState.last_source_trace.simulated_energy_kwh.toFixed(2)} kWh
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Reduction {twinState.last_source_trace.reduction_pct.toFixed(1)}% · {twinState.last_source_trace.source}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground mt-2">No twin-adjusted events yet. Execute an ADR action to trigger the response loop.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                <div className="rounded-lg border border-primary/20 bg-muted/30 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs text-muted-foreground font-mono uppercase">Active Control Effects</p>
+                    <Zap className="w-4 h-4 text-primary" />
+                  </div>
+                  {twinEffects.length === 0 ? (
+                    <p className="text-sm text-muted-foreground font-mono">No active digital-twin control effects.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {twinEffects.slice(0, 6).map((effect) => (
+                        <div key={effect.effect_id} className="rounded-md border border-primary/20 bg-primary/5 p-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-xs text-foreground font-semibold">{effect.block_label}</p>
+                            <span className="text-[10px] font-mono text-muted-foreground">
+                              {effect.stage} · {effect.progress_pct.toFixed(0)}% · {effect.remaining_seconds}s
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground font-mono mt-1">
+                            {effect.control_type} · target {effect.target_reduction_pct.toFixed(1)}%
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-primary/20 bg-muted/30 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs text-muted-foreground font-mono uppercase">Recent Twin Action Activations</p>
+                    <Radar className="w-4 h-4 text-primary" />
+                  </div>
+                  {!(twinState?.recent_actions?.length) ? (
+                    <p className="text-sm text-muted-foreground font-mono">Execute an ADR action to watch the closed-loop response begin.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {twinState.recent_actions.slice(0, 4).map((item, idx) => (
+                        <div key={`${item.ts}-${item.block_id}-${idx}`} className="rounded-md border border-primary/20 bg-primary/5 p-2">
+                          <p className="text-xs text-foreground font-semibold">
+                            {item.block_label} · {item.expected_reduction_pct.toFixed(1)}% expected
+                          </p>
+                          <p className="text-[11px] text-muted-foreground font-mono mt-1">
+                            {new Date(item.ts).toLocaleTimeString()} · {item.stage} · {item.source}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{item.recommendation}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-primary/20 bg-muted/30 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div>
+                    <p className="text-xs text-muted-foreground font-mono uppercase">Manual Twin Control Panel</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Directly simulate control actions on any block (HVAC/lights/ventilation) and watch the closed-loop response.
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground">
+                    Source mode {twinState?.option_b_source_enabled ? "ON" : "OFF"} · Overlay mode {twinState?.option_a_overlay_enabled ? "ON" : "OFF"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  <div className="xl:col-span-1 space-y-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="twin-block" className="text-xs font-mono uppercase text-muted-foreground">
+                        Target Block
+                      </Label>
+                      <select
+                        id="twin-block"
+                        value={selectedTwinBlockId}
+                        onChange={(event) => setSelectedTwinBlockId(event.target.value)}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                        disabled={!snapshot?.blocks?.length || twinApplyBusy}
+                      >
+                        {(snapshot?.blocks ?? []).map((block) => (
+                          <option key={block.block_id} value={block.block_id}>
+                            {block.block_label} ({block.status})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="rounded-md border border-primary/20 bg-primary/5 p-3 text-xs font-mono text-muted-foreground">
+                      {selectedTwinBlock ? (
+                        <>
+                          <div>Current: {selectedTwinBlock.energy_kwh.toFixed(2)} kWh vs baseline {selectedTwinBlock.baseline_kwh.toFixed(2)} kWh</div>
+                          <div className="mt-1">
+                            Source twin: {selectedTwinBlock.twin_source?.applied ? "ACTIVE" : "IDLE"} ·{" "}
+                            {selectedTwinBlock.twin_source?.reduction_pct?.toFixed(1) ?? "0.0"}%
+                          </div>
+                          <div className="mt-1">
+                            Overlay preview: {selectedTwinBlock.twin_overlay?.applied ? `${selectedTwinBlock.twin_overlay.reduction_pct?.toFixed(1)}%` : "none"}
+                          </div>
+                        </>
+                      ) : (
+                        <div>Waiting for block telemetry...</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="xl:col-span-1 space-y-3">
+                    <div className="flex items-center justify-between rounded-md border border-primary/20 bg-primary/5 p-3">
+                      <div>
+                        <p className="text-sm text-foreground">HVAC Eco Mode</p>
+                        <p className="text-[11px] text-muted-foreground">Ramped setpoint increase for cooling load reduction</p>
+                      </div>
+                      <Switch checked={twinHvacEco} onCheckedChange={setTwinHvacEco} disabled={twinApplyBusy || !selectedTwinBlockId} />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-md border border-primary/20 bg-primary/5 p-3">
+                      <div>
+                        <p className="text-sm text-foreground">Lights Off (Non-critical)</p>
+                        <p className="text-[11px] text-muted-foreground">Immediate discretionary lighting shed</p>
+                      </div>
+                      <Switch checked={twinLightsOff} onCheckedChange={setTwinLightsOff} disabled={twinApplyBusy || !selectedTwinBlockId} />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-md border border-primary/20 bg-primary/5 p-3">
+                      <div>
+                        <p className="text-sm text-foreground">Ventilation Eco</p>
+                        <p className="text-[11px] text-muted-foreground">Lower fan/ventilation energy with ramp delay</p>
+                      </div>
+                      <Switch checked={twinVentEco} onCheckedChange={setTwinVentEco} disabled={twinApplyBusy || !selectedTwinBlockId} />
+                    </div>
+                  </div>
+
+                  <div className="xl:col-span-1 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label htmlFor="twin-setpoint" className="text-xs font-mono uppercase text-muted-foreground">
+                          HVAC +°C
+                        </Label>
+                        <Input
+                          id="twin-setpoint"
+                          type="number"
+                          min={1}
+                          max={4}
+                          step={0.5}
+                          value={twinSetpointDelta}
+                          onChange={(e) => setTwinSetpointDelta(Number(e.target.value || 2))}
+                          disabled={twinApplyBusy || !selectedTwinBlockId}
+                          className="bg-muted/40"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="twin-duration" className="text-xs font-mono uppercase text-muted-foreground">
+                          Duration (min)
+                        </Label>
+                        <Input
+                          id="twin-duration"
+                          type="number"
+                          min={1}
+                          max={60}
+                          step={1}
+                          value={twinDurationMinutes}
+                          onChange={(e) => setTwinDurationMinutes(Number(e.target.value || 15))}
+                          disabled={twinApplyBusy || !selectedTwinBlockId}
+                          className="bg-muted/40"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border border-warning/30 bg-warning/10 p-3 text-[11px] text-muted-foreground">
+                      Manual twin controls replace current twin effects for the selected block to keep the simulation judge-readable.
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        className="border-primary/40"
+                        onClick={() => handleApplyTwinControls(false)}
+                        disabled={twinApplyBusy || !selectedTwinBlockId}
+                      >
+                        {twinApplyBusy ? "Applying..." : "Apply Twin Controls"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="border-destructive/40"
+                        onClick={() => handleApplyTwinControls(true)}
+                        disabled={twinApplyBusy || !selectedTwinBlockId}
+                      >
+                        Reset Block to Normal
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -693,6 +1036,11 @@ const Dashboard = () => {
                       <div className="text-foreground font-semibold">{block.block_label}</div>
                       <div className="mt-2 text-muted-foreground">{block.status.replace("_", " ")}</div>
                       <div className="mt-1 text-foreground">{block.savings_kwh.toFixed(1)} kWh saved</div>
+                      {block.twin_source?.active_effects ? (
+                        <div className="mt-1 text-[10px] text-primary">
+                          Twin {block.twin_source.stage} · -{block.twin_source.reduction_pct.toFixed(1)}%
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>

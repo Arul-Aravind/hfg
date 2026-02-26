@@ -11,6 +11,7 @@ export interface BlockStatus {
   block_id: string;
   block_label: string;
   energy_kwh: number;
+  raw_energy_kwh?: number;
   baseline_kwh: number;
   occupancy: number;
   temperature: number;
@@ -27,6 +28,41 @@ export interface BlockStatus {
   history?: BlockHistoryPoint[];
   forecast_peak_deviation?: number;
   forecast_waste_risk?: string;
+  twin_source?: {
+    applied: boolean;
+    reduction_pct: number;
+    stage: string;
+    active_effects: number;
+    raw_energy_kwh: number;
+    simulated_energy_kwh: number;
+  } | null;
+  twin_overlay?: {
+    enabled: boolean;
+    applied?: boolean;
+    reduction_pct?: number;
+    stage?: string;
+    active_effects?: number;
+    progress_pct?: number;
+    energy_kwh?: number;
+    deviation_pct?: number;
+    savings_kwh?: number;
+    cost_inr?: number;
+    waste_cost_inr?: number;
+    co2_kg?: number;
+    status?: WasteStatus | string;
+  } | null;
+  twin_control_state?: {
+    block_id: string;
+    block_label: string;
+    hvac_mode: string;
+    hvac_setpoint_c: number;
+    lights_on: boolean;
+    ventilation_mode: string;
+    active_effects: number;
+    stage: string;
+    last_action_id?: string | null;
+    last_action_at?: string | null;
+  } | null;
   lstm_predicted_deviation_pct?: number;
   lstm_anomaly_probability?: number;
   lstm_risk?: "LOW" | "MEDIUM" | "HIGH" | string;
@@ -54,6 +90,8 @@ export interface DashboardTotals {
   adr_verified_co2_kg?: number;
   predicted_avoidable_kwh_next_hour?: number;
   predictive_high_risk_blocks?: number;
+  digital_twin_overlay_delta_kwh_now?: number;
+  digital_twin_source_active_blocks?: number;
 }
 
 export interface DemandResponseAction {
@@ -113,6 +151,56 @@ export interface DashboardSnapshot {
       block_label: string;
       baseline_kwh: number;
     } | null;
+  };
+  digital_twin?: {
+    option_a_overlay_enabled: boolean;
+    option_b_source_enabled: boolean;
+    active_effects: number;
+    controlled_blocks: number;
+    controlled_block_ids: string[];
+    overlay_preview_delta_kwh_now: number;
+    overlay_preview_blocks: number;
+    last_source_trace?: {
+      block_id: string;
+      ts: string;
+      source: string;
+      raw_energy_kwh: number;
+      simulated_energy_kwh: number;
+      reduction_pct: number;
+      stage: string;
+      active_effects: number;
+      progress_pct: number;
+      applied: boolean;
+    } | null;
+    active_effect_details?: Array<{
+      effect_id: string;
+      action_id?: string | null;
+      block_id: string;
+      block_label: string;
+      control_type: string;
+      target_reduction_pct: number;
+      progress_pct: number;
+      stage: string;
+      remaining_seconds: number;
+      source: string;
+    }>;
+    recent_actions?: Array<{
+      ts: string;
+      action_id?: string | null;
+      block_id: string;
+      block_label: string;
+      source: string;
+      recommendation: string;
+      expected_reduction_pct: number;
+      stage: string;
+      effects: Array<{
+        effect_id: string;
+        control_type: string;
+        target_reduction_pct: number;
+        ramp_seconds: number;
+        duration_seconds: number;
+      }>;
+    }>;
   };
   actions?: DemandResponseAction[];
   adr_summary?: AdrSummary;

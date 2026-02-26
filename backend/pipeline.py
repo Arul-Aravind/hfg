@@ -14,6 +14,7 @@ from typing import Dict, List
 
 import pathway as pw
 
+from .digital_twin import DigitalTwinEngine
 from .store import BlockSnapshot, BlockStateStore
 
 logger = logging.getLogger(__name__)
@@ -58,12 +59,14 @@ class EnergySubject(pw.io.python.ConnectorSubject):
         blocks: List[BlockProfile],
         interval_seconds: float = 1.5,
         file_path: Path | None = None,
+        digital_twin: DigitalTwinEngine | None = None,
     ):
         super().__init__()
         self.event_queue = event_queue
         self.blocks = blocks
         self.interval_seconds = interval_seconds
         self.file_path = file_path
+        self.digital_twin = digital_twin
         self._file_offset = 0
         self._file_mtime = 0.0
         self._fieldnames: list[str] | None = None
@@ -74,18 +77,21 @@ class EnergySubject(pw.io.python.ConnectorSubject):
                 event = self.event_queue.get(timeout=self.interval_seconds)
                 if event is None:
                     continue
+                event = self._apply_twin(event, source="api_ingest")
                 self.next(**event)
             except queue.Empty:
                 if self.file_path:
                     file_events = self._read_file_events()
                     if file_events:
                         for event in file_events:
+                            event = self._apply_twin(event, source="csv_override")
                             self.next(**event)
                         continue
                 if not self.blocks:
                     time.sleep(self.interval_seconds)
                     continue
                 event = synth_event(random.choice(self.blocks))
+                event = self._apply_twin(event, source="synthetic_twin_source")
                 self.next(**event)
                 time.sleep(self.interval_seconds)
 
@@ -133,6 +139,15 @@ class EnergySubject(pw.io.python.ConnectorSubject):
             self._file_offset = handle.tell()
         return events
 
+    def _apply_twin(self, event: dict, source: str) -> dict:
+        if not self.digital_twin:
+            return event
+        try:
+            return self.digital_twin.apply_source_event(event, source=source)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Digital twin source adjustment failed for %s: %s", source, exc)
+            return event
+
 
 def synth_event(block: BlockProfile) -> dict:
     temperature = round(random.uniform(22, 36), 1)
@@ -166,6 +181,7 @@ class EnergyPipeline:
         baseline_hop_seconds: int = 5,
         stream_interval_seconds: float = 1.5,
         file_stream_path: Path | None = None,
+        digital_twin: DigitalTwinEngine | None = None,
     ):
         self.store = store
         self.blocks = blocks
@@ -173,8 +189,11 @@ class EnergyPipeline:
         self.baseline_hop_seconds = baseline_hop_seconds
         self.stream_interval_seconds = stream_interval_seconds
         self.file_stream_path = file_stream_path
+        self.digital_twin = digital_twin
         self._thread: Thread | None = None
         self._queue: queue.Queue = queue.Queue()
+        if self.digital_twin:
+            self.digital_twin.register_blocks(self.blocks)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -227,6 +246,7 @@ class EnergyPipeline:
             self.blocks,
             interval_seconds=self.stream_interval_seconds,
             file_path=self.file_stream_path,
+            digital_twin=self.digital_twin,
         )
         events = pw.io.python.read(subject, schema=EnergySchema, autocommit_duration_ms=400)
 
@@ -406,6 +426,14 @@ class EnergyPipeline:
             cost_inr = float(row["energy_kwh"]) * tariff_rate
             waste_cost = float(row["savings_kwh"]) * tariff_rate
             co2_kg = float(row["energy_kwh"]) * carbon_intensity
+            twin_trace = None
+            if self.digital_twin:
+                twin_trace = self.digital_twin.match_source_trace(block_id, event_ts)
+            raw_energy_kwh = float(twin_trace["raw_energy_kwh"]) if twin_trace else float(row["energy_kwh"])
+            twin_source_reduction_pct = float(twin_trace["reduction_pct"]) if twin_trace else 0.0
+            twin_source_stage = str(twin_trace["stage"]) if twin_trace else "IDLE"
+            twin_source_active_effects = int(twin_trace["active_effects"]) if twin_trace else 0
+            twin_source_applied = bool(twin_trace["applied"]) if twin_trace else False
 
             snapshot = BlockSnapshot(
                 block_id=block_id,
@@ -431,6 +459,11 @@ class EnergyPipeline:
                 forecast_peak_deviation=0.0,
                 forecast_waste_risk="LOW",
                 updated_at=updated_at,
+                raw_energy_kwh=raw_energy_kwh,
+                twin_source_reduction_pct=twin_source_reduction_pct,
+                twin_source_stage=twin_source_stage,
+                twin_source_active_effects=twin_source_active_effects,
+                twin_source_applied=twin_source_applied,
             )
             self.store.update(snapshot)
             self.store.set_environment(

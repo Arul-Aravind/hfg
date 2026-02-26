@@ -138,3 +138,24 @@ export const resolveAction = async (token: string, actionId: string) => {
   if (!res.ok) throw new Error("Failed to resolve action");
   return res.json();
 };
+
+export const applyTwinManualControl = async (
+  token: string,
+  payload: {
+    block_id: string;
+    hvac_eco: boolean;
+    lights_off: boolean;
+    ventilation_eco: boolean;
+    hvac_setpoint_delta_c: number;
+    duration_minutes: number;
+    replace_existing?: boolean;
+  },
+) => {
+  const res = await fetch(`${API_BASE}/twin/manual-control`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("Failed to apply digital twin controls");
+  return res.json();
+};

@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from .assistant import Copilot
+from .digital_twin import DigitalTwinEngine
 from .lstm_predictor import LSTMAnomalyPredictor
 from .pipeline import EnergyPipeline, load_blocks
 from .security import create_access_token, decode_token, hash_password, verify_password
@@ -63,6 +64,21 @@ class ActionProposeRequest(BaseModel):
     recommendation: Optional[str] = None
     rationale: Optional[str] = None
     reduction_kwh: Optional[float] = None
+
+
+class TwinModesRequest(BaseModel):
+    option_a_overlay_enabled: Optional[bool] = None
+    option_b_source_enabled: Optional[bool] = None
+
+
+class TwinManualControlRequest(BaseModel):
+    block_id: str
+    hvac_eco: bool = False
+    lights_off: bool = False
+    ventilation_eco: bool = False
+    hvac_setpoint_delta_c: float = 2.0
+    duration_minutes: int = 15
+    replace_existing: bool = True
 
 
 class User(BaseModel):
@@ -140,10 +156,12 @@ def validate_token(token: str) -> User:
 
 blocks = load_blocks(BLOCKS_FILE)
 store = BlockStateStore(org_id=DEFAULT_ADMIN["org_id"], org_name=DEFAULT_ADMIN["org_name"])
+digital_twin = DigitalTwinEngine(option_a_overlay_enabled=True, option_b_source_enabled=True)
 pipeline = EnergyPipeline(
     store=store,
     blocks=blocks,
     file_stream_path=DATA_DIR / "sensor_stream.csv",
+    digital_twin=digital_twin,
 )
 copilot = Copilot(DOCS_DIR)
 lstm_predictor = LSTMAnomalyPredictor(
@@ -228,6 +246,7 @@ def start_reporting() -> None:
 @app.get("/health")
 def health() -> dict:
     model_status = lstm_predictor.status()
+    twin_state = digital_twin.state_summary(store.snapshot())
     return {
         "status": "ok",
         "timestamp": datetime.utcnow().isoformat(),
@@ -236,6 +255,12 @@ def health() -> dict:
             "model_ready": bool(model_status.get("model_ready")),
             "training_samples": int(model_status.get("training_samples") or 0),
             "trained_with_lstm": bool(model_status.get("trained_with_lstm")),
+        },
+        "digital_twin": {
+            "option_a_overlay_enabled": twin_state["option_a_overlay_enabled"],
+            "option_b_source_enabled": twin_state["option_b_source_enabled"],
+            "active_effects": twin_state["active_effects"],
+            "controlled_blocks": twin_state["controlled_blocks"],
         },
     }
 
@@ -285,6 +310,8 @@ def build_snapshot(user: User) -> dict:
     blocks: list[dict] = []
     predicted_avoidable_total = 0.0
     predictive_high_risk_blocks = 0
+    twin_overlay_delta_total = 0.0
+    twin_source_active_blocks = 0
 
     for block in blocks_snapshot:
         history_points = store.history(block.block_id)
@@ -305,17 +332,30 @@ def build_snapshot(user: User) -> dict:
             occupancy=block.occupancy,
             temperature=block.temperature,
         )
+        twin_overlay = digital_twin.overlay_preview(block)
+        twin_control_state = digital_twin.block_control_state(block.block_id)
         forecast_risk = _max_risk(linear_risk, prediction.risk)
         forecast_peak = max(linear_peak, prediction.predicted_deviation_pct)
         predicted_avoidable_total += prediction.avoidable_kwh
         if prediction.risk == "HIGH":
             predictive_high_risk_blocks += 1
+        if block.twin_source_applied or block.twin_source_active_effects > 0:
+            twin_source_active_blocks += 1
+        if twin_overlay and twin_overlay.get("applied"):
+            try:
+                twin_overlay_delta_total += max(
+                    0.0,
+                    float(block.energy_kwh) - float(twin_overlay.get("energy_kwh") or block.energy_kwh),
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         blocks.append(
             {
                 "block_id": block.block_id,
                 "block_label": block.block_label,
                 "energy_kwh": round(block.energy_kwh, 2),
+                "raw_energy_kwh": round(block.raw_energy_kwh or block.energy_kwh, 2),
                 "baseline_kwh": round(block.baseline_kwh, 2),
                 "occupancy": round(block.occupancy, 1),
                 "temperature": round(block.temperature, 1),
@@ -332,6 +372,16 @@ def build_snapshot(user: User) -> dict:
                 "history": history_payload,
                 "forecast_peak_deviation": round(float(forecast_peak), 1),
                 "forecast_waste_risk": forecast_risk,
+                "twin_source": {
+                    "applied": bool(block.twin_source_applied),
+                    "reduction_pct": round(float(block.twin_source_reduction_pct or 0.0), 1),
+                    "stage": block.twin_source_stage or "IDLE",
+                    "active_effects": int(block.twin_source_active_effects or 0),
+                    "raw_energy_kwh": round(block.raw_energy_kwh or block.energy_kwh, 2),
+                    "simulated_energy_kwh": round(block.energy_kwh, 2),
+                },
+                "twin_overlay": twin_overlay,
+                "twin_control_state": twin_control_state,
                 "lstm_predicted_deviation_pct": prediction.predicted_deviation_pct,
                 "lstm_anomaly_probability": prediction.anomaly_probability,
                 "lstm_risk": prediction.risk,
@@ -345,11 +395,15 @@ def build_snapshot(user: User) -> dict:
 
     stats["predicted_avoidable_kwh_next_hour"] = round(predicted_avoidable_total, 2)
     stats["predictive_high_risk_blocks"] = predictive_high_risk_blocks
+    stats["digital_twin_overlay_delta_kwh_now"] = round(twin_overlay_delta_total, 2)
+    stats["digital_twin_source_active_blocks"] = twin_source_active_blocks
 
     last_train_unix = model_status.get("last_train_unix")
     last_trained_at = None
     if isinstance(last_train_unix, (int, float)) and last_train_unix > 0:
         last_trained_at = datetime.utcfromtimestamp(last_train_unix).isoformat()
+
+    twin_summary = digital_twin.state_summary(blocks_snapshot)
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
@@ -358,6 +412,7 @@ def build_snapshot(user: User) -> dict:
         "totals": stats,
         "environment": environment,
         "pathway_state": pathway_state,
+        "digital_twin": twin_summary,
         "actions": actions,
         "adr_summary": adr_summary,
         "predictive_state": {
@@ -485,6 +540,7 @@ def list_actions(current_user: User = Depends(get_current_user)) -> dict:
     return {
         "actions": [serialize_action(action) for action in store.list_actions(limit=50)],
         "summary": store.adr_summary(),
+        "digital_twin": digital_twin.state_summary(store.snapshot()),
     }
 
 
@@ -533,7 +589,17 @@ def execute_action(action_id: str, current_user: User = Depends(get_current_user
     action = store.execute_action(action_id, current_user.username)
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
-    return {"action": serialize_action(action)}
+    block_snapshot = next((b for b in store.snapshot() if b.block_id == action.block_id), None)
+    twin_activation = digital_twin.activate_from_action(
+        action_id=action.id,
+        block_id=action.block_id,
+        block_label=action.block_label,
+        recommendation=action.recommendation,
+        occupancy=block_snapshot.occupancy if block_snapshot else None,
+        temperature=block_snapshot.temperature if block_snapshot else None,
+        source="ADR_EXECUTE",
+    )
+    return {"action": serialize_action(action), "digital_twin": twin_activation}
 
 
 @app.post("/actions/{action_id}/verify")
@@ -549,7 +615,49 @@ def resolve_adr_action(action_id: str, current_user: User = Depends(get_current_
     action = store.resolve_action(action_id, current_user.username)
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
+    digital_twin.resolve_action(action_id)
     return {"action": serialize_action(action)}
+
+
+@app.get("/twin/state")
+def twin_state(current_user: User = Depends(get_current_user)) -> dict:  # noqa: ARG001
+    return digital_twin.state_summary(store.snapshot())
+
+
+@app.post("/twin/modes")
+def twin_modes(payload: TwinModesRequest, current_user: User = Depends(get_current_user)) -> dict:
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    modes = digital_twin.set_modes(
+        option_a_overlay_enabled=payload.option_a_overlay_enabled,
+        option_b_source_enabled=payload.option_b_source_enabled,
+    )
+    return {"modes": modes, "digital_twin": digital_twin.state_summary(store.snapshot())}
+
+
+@app.post("/twin/manual-control")
+def twin_manual_control(payload: TwinManualControlRequest, current_user: User = Depends(get_current_user)) -> dict:
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    blocks_snapshot = store.snapshot()
+    block_snapshot = next((b for b in blocks_snapshot if b.block_id == payload.block_id), None)
+    if not block_snapshot:
+        raise HTTPException(status_code=404, detail="Block not found")
+
+    result = digital_twin.apply_manual_controls(
+        block_id=block_snapshot.block_id,
+        block_label=block_snapshot.block_label,
+        hvac_eco=payload.hvac_eco,
+        lights_off=payload.lights_off,
+        ventilation_eco=payload.ventilation_eco,
+        hvac_setpoint_delta_c=payload.hvac_setpoint_delta_c,
+        duration_minutes=payload.duration_minutes,
+        replace_existing=payload.replace_existing,
+        occupancy=block_snapshot.occupancy,
+        temperature=block_snapshot.temperature,
+    )
+    return {"result": result, "digital_twin": digital_twin.state_summary(blocks_snapshot)}
 
 
 @app.post("/assistant/ask")
